@@ -1,6 +1,6 @@
 #!makefile
 
-KERNEL_DIR ?= ../linux-a10
+KERNEL_DIR ?= ../linux-hdmi-dongle
 
 .PHONY : all clean
 all:
@@ -8,5 +8,3 @@ all:
 
 clean:
 	@$(MAKE) -C $(KERNEL_DIR) M=$$PWD clean
-
-
