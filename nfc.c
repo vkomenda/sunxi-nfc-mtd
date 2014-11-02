@@ -42,7 +42,7 @@ static int read_offset = 0;
 static int write_offset = 0;
 static char *read_buffer = NULL;
 static char *write_buffer = NULL;
-static int buffer_size = 8192 + 1024;
+static int buffer_size = 16384 + 2048;
 static dma_addr_t read_buffer_dma;
 static dma_addr_t write_buffer_dma;
 static int dma_hdle;
@@ -243,7 +243,7 @@ static void nand1k_enable_random(void)
 		ctl |= NFC_RANDOM_EN;
 		ctl &= ~NFC_RANDOM_DIRECTION;
 		ctl &= ~NFC_RANDOM_SEED;
-		ctl |= (0x4a80 << 16);
+		ctl |= 0x4a80 << 16;
 		writel(ctl, NFC_REG_ECC_CTL);
 		DBG_INFO("+random:1k\n");
 	}
@@ -360,7 +360,9 @@ int check_ecc(int eblock_cnt)
 	cfg = readl(NFC_REG_ECC_ST) & 0xffff;
 	for (i = 0; i < eblock_cnt; i++) {
 		if (cfg & (1<<i)) {
-			ERR_INFO("ECC too many error at %x:%d\n", sunxi_nand_read_page_addr, i);
+			ERR_INFO("ECC status mask %x: "
+				 "Uncorrectable error at address %x sector %d\n",
+				 cfg, sunxi_nand_read_page_addr, i);
 			return -1;
 		}
 	}
@@ -372,11 +374,6 @@ int check_ecc(int eblock_cnt)
 
 		for (j = 0; j < n; j++, cfg >>= 8) {
 			int bits = cfg & 0xff;
-            /*
-			if (bits) {
-				DBG_INFO("ECC bitflip happen at %x:%d\n", sunxi_nand_read_page_addr, j);
-			}
-			*/
 			if (bits >= max_ecc_bit_cnt - 4) {
 				DBG_INFO("ECC limit %d/%d at %x:%d\n",
 						 bits, max_ecc_bit_cnt,
@@ -424,7 +421,7 @@ static void nfc_cmdfunc(struct mtd_info *mtd, unsigned command, int column,
 	int addr_cycle, wait_rb_flag, byte_count, sector_count;
 	addr_cycle = wait_rb_flag = byte_count = sector_count = 0;
 
-	DBG_INFO(":command %x\n", command);
+	DBG_INFO(":command %x column %x page address %x\n", command, column, page_addr);
 	wait_cmdfifo_free();
 
 	// switch to AHB
@@ -465,10 +462,11 @@ static void nfc_cmdfunc(struct mtd_info *mtd, unsigned command, int column,
 			sector_count = mtd->writesize / 1024;
 			read_size = mtd->writesize;
 			do_enable_ecc = 1;
-			sunxi_nand_read_page_addr = page_addr;
 			//DBG_INFO("cmdfunc read %d %d\n", column, page_addr);
 		}
 		do_enable_random = 1;
+		/* for ECC debugging purposes */
+		sunxi_nand_read_page_addr = page_addr;
 
 		//access NFC internal RAM by DMA bus
 		writel(readl(NFC_REG_CTL) | NFC_RAM_METHOD, NFC_REG_CTL);
@@ -619,8 +617,11 @@ static void nfc_cmdfunc(struct mtd_info *mtd, unsigned command, int column,
 		select_rb(0);
 		break;
 	case NAND_CMD_READ0:
-		for (i = 0; i < sector_count; i++)
-			*((unsigned int *)(read_buffer + mtd->writesize) + i) = readl(NFC_REG_USER_DATA(i));
+		for (i = 0; i < sector_count; i++) {
+			u32 userdata = readl(NFC_REG_USER_DATA(i));
+			*((u32*)(read_buffer + mtd->writesize) + i) = userdata;
+			DBG_INFO("READ0: sector %d user data %x\n", i, userdata);
+		}
 		break;
 	}
 
@@ -692,8 +693,14 @@ static irqreturn_t nfc_interrupt_handler(int irq, void *dev_id)
 
 static int get_chip_status(struct mtd_info *mtd)
 {
+	u8 status;
+
 	nfc_cmdfunc(mtd, NAND_CMD_STATUS, -1, -1);
-	return nfc_read_byte(mtd);
+	status = nfc_read_byte(mtd);
+	if (status != 0xC0)  /* report anomalies */
+		DBG_INFO("chip status %.2x\n", status);
+
+	return status;
 }
 
 // For erase and program command to wait for chip ready
@@ -923,25 +930,35 @@ int nfc_first_init(struct mtd_info *mtd)
 	nand->read_buf = nfc_read_buf;
 	nand->write_buf = nfc_write_buf;
 	nand->waitfunc = nfc_wait;
+	nand->bbt_options = NAND_BBT_SCAN2NDPAGE | NAND_BBT_SCANLASTPAGE;
 	if (use_flash_bbt)
-		nand->bbt_options = NAND_BBT_USE_FLASH | NAND_BBT_NO_OOB;
+		nand->bbt_options |= NAND_BBT_USE_FLASH | NAND_BBT_NO_OOB;
 	return 0;
 }
 
 static void print_page(struct mtd_info *mtd, int page)
 {
-	int i;
-	char buff[1024];
+	int i, j;
+	u8* buff;
+
+	buff = kzalloc(mtd->writesize, GFP_KERNEL);
 	nfc_cmdfunc(mtd, NAND_CMD_READ0, 0, page);
 	nfc_read_buf(mtd, buff, 6);
-	DBG_INFO("READ: %x %x %x %x %x %x\n",
-			 buff[0], buff[1], buff[2], buff[3], buff[4], buff[5]);
+	DBG_INFO("READ: %.2x %.2x %.2x %.2x %.2x %.2x %.2x %.2x\n",
+		 buff[0], buff[1], buff[2], buff[3],
+		 buff[4], buff[5], buff[6], buff[7]);
+	kfree(buff);
 
+	buff = kzalloc(mtd->oobsize, GFP_KERNEL);
 	nfc_cmdfunc(mtd, NAND_CMD_READOOB, 0, page);
-	nfc_read_buf(mtd, buff, 640);
-	for (i = 0; i < 640; i++)
-		printk("%02x ", buff[i]);
-	printk("\n");
+	nfc_read_buf(mtd, buff, mtd->oobsize);
+	DBG_INFO("OOB:\n");
+	for (i = 0; i < mtd->oobsize / 32; i++) {
+		for (j = 0; j < 32; j++)
+			printk("%.2x ", buff[32 * i + j]);
+		printk("\n");
+	}
+	kfree(buff);
 }
 
 static void test_nfc(struct mtd_info *mtd)
@@ -949,10 +966,11 @@ static void test_nfc(struct mtd_info *mtd)
 	int i, j, n=0;
 	struct nand_chip *nand = mtd->priv;
 	int page = 1280;
-	unsigned char buff[1024];
+	u8 buff[2048];
 	int blocks = 2, num_blocks = mtd->writesize / 1024;
 
 	DBG_INFO("============== TEST NFC ================\n");
+	memset(buff, 0, 2048);
 
 	// read page
 	print_page(mtd, page);
@@ -974,8 +992,7 @@ static void test_nfc(struct mtd_info *mtd)
 		memset(buff, 0xff, 1024);
 		nfc_write_buf(mtd, buff, 1024);
 	}
-	// wrong mtd->oobsize for SAMSUNG K9GBG08U0A
-	for (i = 0, n = 128; i < 640; i++, n++)
+	for (i = 0, n = 128; i < mtd->oobsize; i++, n++)
 		buff[i] = n % 256;
 	nfc_write_buf(mtd, buff, 1024);
 	nfc_cmdfunc(mtd, NAND_CMD_PAGEPROG, -1, -1);
@@ -1158,7 +1175,7 @@ int nfc_second_init(struct mtd_info *mtd)
 	}
 
 	// test command
-	//test_nfc(mtd);
+	test_nfc(mtd);
 	//test_ops(mtd);
 	//print_page(mtd, 0);
 
