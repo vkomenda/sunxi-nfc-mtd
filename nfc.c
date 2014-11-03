@@ -392,7 +392,7 @@ static void disable_ecc(void)
 		uint32_t cfg = readl(NFC_REG_ECC_CTL);
 		cfg &= (~NFC_ECC_EN) & 0xffffffff;
 		writel(cfg, NFC_REG_ECC_CTL);
-		DBG_INFO("+ecc\n");
+		DBG_INFO("-ecc\n");
 	}
 }
 
@@ -403,16 +403,16 @@ static void disable_ecc(void)
 static void nfc_select_chip(struct mtd_info *mtd, int chip)
 {
 	uint32_t ctl;
+	DBG_INFO(":select chip %d\n", chip);
 	// A10 has 8 CE pin to support 8 flash chips
 	ctl = readl(NFC_REG_CTL);
 	ctl &= ~NFC_CE_SEL;
 	ctl |= ((chip & 7) << 24);
 	writel(ctl, NFC_REG_CTL);
-	DBG_INFO(":select chip %d\n", chip);
 }
 
 static void nfc_cmdfunc(struct mtd_info *mtd, unsigned command, int column,
-						int page_addr)
+			int page_addr)
 {
 	int i;
 	uint32_t cfg = command;
@@ -982,18 +982,18 @@ static void print_reg(struct reg_info* reg)
 	printk("%s =", reg->name);
 	/*
 	if (reg->len < 4) {
-		for (i = 0; i < reg->len; i += 4)
-			printk(" %.8x", readl(reg->addr + i));
+		for (j = 0; j < reg->len; j += 4)
+			printk(" %.8x", readl(reg->addr + j));
 		printk("\n");
 	}
 	else {
 	*/
 
 	printk("\n");
-	for (i = 0; i < reg->len / 8 || i < 1; i += 4) {
+	for (i = 0; i < reg->len / 8 || i == 0; i++) {
 		printk("%.8x:", reg->addr + i * 8);
 		for (j = 0; j < 8; j++)
-			printk(" %.8x", readl(reg->addr + (i * 8 + j)));
+			printk(" %.8x", readl(reg->addr + i * 8 + j * 4));
 		printk("\n");
 	}
 }
@@ -1014,6 +1014,8 @@ static void print_page(struct mtd_info *mtd, int page, bool full)
 	int i, j, saved_read_offset = read_offset;
 	u8* buff;
 
+	pr_info(" ===== PAGE %d READ =====\n", page);
+
 	buff = kmalloc(PRINT_BUFFER_SIZE, GFP_KERNEL);
  	if (!buff)
  		return;
@@ -1022,7 +1024,8 @@ static void print_page(struct mtd_info *mtd, int page, bool full)
 	memset(buff, 0xEE, PRINT_BUFFER_SIZE);
 	nfc_cmdfunc(mtd, NAND_CMD_READ0, 0, page);
 	if (full) {
-		DBG_INFO("READ:\n");
+		pr_info("READ:\n");
+		nfc_read_buf(mtd, buff, mtd->writesize);
 		for (i = 0; i < mtd->writesize / 32; i++) {
 			for (j = 0; j < 32; j++)
 				printk("%.2x ", buff[32 * i + j]);
@@ -1031,18 +1034,19 @@ static void print_page(struct mtd_info *mtd, int page, bool full)
 	}
 	else {
 		nfc_read_buf(mtd, buff, 6);
-		DBG_INFO("READ: %.2x %.2x %.2x %.2x %.2x %.2x %.2x %.2x\n",
-			 buff[0], buff[1], buff[2], buff[3],
-			 buff[4], buff[5], buff[6], buff[7]);
+		pr_info("READ 6: %.2x %.2x %.2x %.2x %.2x %.2x %.2x %.2x\n",
+			buff[0], buff[1], buff[2], buff[3],
+			buff[4], buff[5], buff[6], buff[7]);
 	}
 
+	pr_info(" ***** REGISTERS AFTER READ0 *****\n");
 	print_regs();
 
 	read_offset = mtd->writesize;
 	memset(buff, 0xBB, PRINT_BUFFER_SIZE);
 	nfc_cmdfunc(mtd, NAND_CMD_READOOB, 0, page);
 	nfc_read_buf(mtd, buff, mtd->oobsize);
-	DBG_INFO("OOB:\n");
+	pr_info("OOB:\n");
 	for (i = 0; i < mtd->oobsize / 32; i++) {
 		for (j = 0; j < 32; j++)
 			printk("%.2x ", buff[32 * i + j]);
@@ -1050,9 +1054,11 @@ static void print_page(struct mtd_info *mtd, int page, bool full)
 	}
 	read_offset = saved_read_offset;
 
+	pr_info(" ***** REGISTERS AFTER READOOB *****\n");
 	print_regs();
 
 	kfree(buff);
+	pr_info(" ===== PAGE %d READ END =====\n", page);
 }
 
 static void test_nfc(struct mtd_info *mtd)
@@ -1073,13 +1079,13 @@ static void test_nfc(struct mtd_info *mtd)
 	print_page(mtd, page, 0);
 
 	// erase block
-	DBG_INFO("Test: erase block of page %d\n", page);
+	pr_info(" === Test: erase block of page %d ===\n", page);
 	nfc_cmdfunc(mtd, NAND_CMD_ERASE1, 0, page);
 	nfc_cmdfunc(mtd, NAND_CMD_ERASE2, -1, -1);
 	nfc_wait(mtd, nand);
 	print_page(mtd, page, 0);
 
-	DBG_INFO("Test: print the erased page without randomizer or ECC\n");
+	pr_info(" === Test: print the erased page without randomizer or ECC ===\n");
 	hwecc_switch = 0;
 	random_switch = 0;
 	print_page(mtd, page, 0);
