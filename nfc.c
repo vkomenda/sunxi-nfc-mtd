@@ -990,7 +990,7 @@ static void print_reg(struct reg_info* reg)
 	*/
 
 	printk("\n");
-	for (i = 0; i < reg->len / 8; i += 4) {
+	for (i = 0; i < reg->len / 8 || i < 1; i += 4) {
 		printk("%.8x:", reg->addr + i * 8);
 		for (j = 0; j < 8; j++)
 			printk(" %.8x", readl(reg->addr + (i * 8 + j)));
