@@ -20,6 +20,7 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
+#include <linux/interrupt.h>
 #include <linux/platform_device.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/nand.h>
@@ -32,6 +33,9 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("yuq");
 
 #define	DRIVER_NAME	"mtd-nand-sunxi"
+
+extern irqreturn_t nfc_interrupt_handler(int irq, void *dev_id);
+
 
 struct sunxi_nand_info {
 	struct mtd_info mtd;
@@ -70,10 +74,17 @@ static int __devinit nand_probe(struct platform_device *pdev)
 		goto out_nfc_exit;
 	}
 
+	// register IRQ
+	if ((err = request_irq(SW_INT_IRQNO_NAND, nfc_interrupt_handler,
+			       IRQF_DISABLED, "NFC", &info->mtd)) < 0) {
+		ERR_INFO("request IRQ fail\n");
+		goto out_nfc_exit;
+	}
+
 	// second phase scan
 	if ((err = nand_scan_tail(&info->mtd)) < 0) {
 		ERR_INFO("nand scan tail fail\n");
-		goto out_nfc_exit;
+		goto out_irq;
 	}
 
 	if ((err = mtd_device_parse_register(&info->mtd, NULL, NULL, NULL, 0)) < 0) {
@@ -86,6 +97,8 @@ static int __devinit nand_probe(struct platform_device *pdev)
 
 out_release_nand:
 	nand_release(&info->mtd);
+out_irq:
+	free_irq(SW_INT_IRQNO_NAND, &info->mtd);
 out_nfc_exit:
 	nfc_exit(&info->mtd);
 out_free_info:
@@ -187,16 +200,18 @@ static int __init nand_init(void)
 static void __exit nand_exit(void)
 {
 	int nand_used = 0;
+	struct sunxi_nand_info *info = platform_get_drvdata(&plat_device);
 
-    if (script_parser_fetch("nand_para", "nand_used", &nand_used, sizeof(int)))
-    	ERR_INFO("nand init fetch emac using configuration failed\n");
+	if (script_parser_fetch("nand_para", "nand_used", &nand_used, sizeof(int)))
+		ERR_INFO("nand init fetch emac using configuration failed\n");
 
-    if(nand_used == 0) {
-        DBG_INFO("nand driver is disabled \n");
-        return;
-    }
+	if(nand_used == 0) {
+		DBG_INFO("nand driver is disabled \n");
+		return;
+	}
 
 	nand1k_exit();
+	free_irq(SW_INT_IRQNO_NAND, &info->mtd);
 	platform_device_unregister(&plat_device);
 	platform_driver_unregister(&plat_driver);
 	DBG_INFO("nand driver : bye bye\n");
@@ -204,7 +219,3 @@ static void __exit nand_exit(void)
 
 module_init(nand_init);
 module_exit(nand_exit);
-
-
-
-

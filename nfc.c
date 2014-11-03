@@ -146,6 +146,7 @@ static void release_nand_clock(void)
 	writel(cfg, NAND_SCLK_CFG_REG);
 }
 
+/*
 static void active_nand_clock(void)
 {
 	uint32_t cfg;
@@ -160,6 +161,7 @@ static void active_nand_clock(void)
 	cfg |= 1 << SCLK_GATING_SHIFT;
 	writel(cfg, NAND_SCLK_CFG_REG);
 }
+*/
 
 #ifdef __LINUX__
 uint32_t pioc_handle;
@@ -301,10 +303,10 @@ static void enable_ecc(int pipline)
 			cfg &= (~NFC_ECC_PIPELINE) & 0xffffffff;
 
 		// if random open, disable exception
-		if(cfg & (1 << 9))
-			cfg &= ~(0x1 << 4);
+		if (cfg & (1 << 9))
+			cfg &= ~(1 << 4);
 		else
-			cfg |= 1 << 4;
+			cfg |=   1 << 4;
 
 		//cfg |= (1 << 1); 16 bit ecc
 
@@ -328,10 +330,7 @@ static void set_ecc_mode(int mode)
 
 int check_ecc(int eblock_cnt)
 {
-	int i;
-	int ecc_mode;
-	int max_ecc_bit_cnt = 16;
-	int cfg, corrected = 0;
+	int i, ecc_mode, max_ecc_bit_cnt = 16, cfg, corrected = 0;
 
         if (!hwecc_switch)
 		return 0;
@@ -376,8 +375,8 @@ int check_ecc(int eblock_cnt)
 			int bits = cfg & 0xff;
 			if (bits >= max_ecc_bit_cnt - 4) {
 				DBG_INFO("ECC limit %d/%d at %x:%d\n",
-						 bits, max_ecc_bit_cnt,
-						 sunxi_nand_read_page_addr, j);
+					 bits, max_ecc_bit_cnt,
+					 sunxi_nand_read_page_addr, j);
 				corrected++;
 			}
 		}
@@ -421,7 +420,8 @@ static void nfc_cmdfunc(struct mtd_info *mtd, unsigned command, int column,
 	int addr_cycle, wait_rb_flag, byte_count, sector_count;
 	addr_cycle = wait_rb_flag = byte_count = sector_count = 0;
 
-	DBG_INFO(":command %x column %x page address %x\n", command, column, page_addr);
+	DBG_INFO(":command %x column %x page address %x\n",
+		 command, column, page_addr);
 	wait_cmdfifo_free();
 
 	// switch to AHB
@@ -671,7 +671,7 @@ static void nfc_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 	read_offset += len;
 }
 
-static irqreturn_t nfc_interrupt_handler(int irq, void *dev_id)
+irqreturn_t nfc_interrupt_handler(int irq, void *dev_id)
 {
 	unsigned int st = readl(NFC_REG_ST);
 	if (st & NFC_RB_B2R) {
@@ -738,6 +738,9 @@ static int nfc_ecc_calculate(struct mtd_info *mtd, const uint8_t *dat, uint8_t *
 
 static int nfc_ecc_correct(struct mtd_info *mtd, uint8_t *dat, uint8_t *read_ecc, uint8_t *calc_ecc)
 {
+	if (!hwecc_switch)
+		return 0;
+
 	return check_ecc(mtd->writesize / 1024);
 }
 
@@ -754,6 +757,7 @@ static void enter_1k_mode(struct save_1k_mode *save)
 {
 	uint32_t ctl;
 
+	DBG_INFO("+mode1k\n");
 	ctl = readl(NFC_REG_CTL);
 	save->ctl = ctl;
 	ctl &= ~NFC_PAGE_SIZE;
@@ -770,6 +774,7 @@ static void enter_1k_mode(struct save_1k_mode *save)
 
 static void exit_1k_mode(struct save_1k_mode *save)
 {
+	DBG_INFO("-mode1k\n");
 	writel(save->ctl, NFC_REG_CTL);
 	writel(save->ecc_ctl, NFC_REG_ECC_CTL);
 	writel(save->spare_area, NFC_REG_SPARE_AREA);
@@ -917,7 +922,7 @@ int nfc_first_init(struct mtd_info *mtd)
 	ctl = (1 << 8);
 	writel(ctl, NFC_REG_TIMING_CTL);
 
-	//first_test_nfc(mtd);
+	first_test_nfc(mtd);
 
 	nand->ecc.mode = NAND_ECC_HW;
 	nand->ecc.hwctl = nfc_ecc_hwctl;
@@ -936,20 +941,105 @@ int nfc_first_init(struct mtd_info *mtd)
 	return 0;
 }
 
-static void print_page(struct mtd_info *mtd, int page)
+struct reg_info {
+	u32    addr;
+	char   name[18];
+	size_t len;      /* Length of the register in 32-bit words. */
+};
+
+static struct reg_info nfc_regs[] = {
+	{NFC_REG_CTL,           "NFC_CTL",           1},
+	{NFC_REG_ST,            "NFC_ST",            1},
+	{NFC_REG_INT,           "NFC_INT",           1},
+	{NFC_REG_TIMING_CTL,    "NFC_TIMING_CTL",    1},
+	{NFC_REG_TIMING_CFG,    "NFC_TIMING_CFG",    1},
+	{NFC_REG_ADDR_LOW,      "NFC_ADDR_LOW",      1},
+	{NFC_REG_ADDR_HIGH,     "NFC_ADDR_HIGH",     1},
+	{NFC_REG_SECTOR_NUM,    "NFC_SECTOR_NUM",    1},
+	{NFC_REG_CNT,           "NFC_CNT",           1},
+	{NFC_REG_CMD,           "NFC_CMD",           1},
+	{NFC_REG_RCMD_SET,      "NFC_READ_CMD_SET",  1},
+	{NFC_REG_WCMD_SET,      "NFC_WRITE_CMD_SET", 1},
+	{NFC_REG_IO_DATA,       "NFC_IO_DATA",       1},
+	{NFC_REG_ECC_CTL,       "NFC_ECC_CTL",       1},
+	{NFC_REG_ECC_ST,        "NFC_ECC_ST",        1},
+	{NFC_REG_DEBUG,         "NFC_DEBUG",         1},
+	{NFC_REG_ECC_CNT0,      "NFC_ECC_CNT0",      1},
+	{NFC_REG_ECC_CNT1,      "NFC_ECC_CNT1",      1},
+	{NFC_REG_ECC_CNT2,      "NFC_ECC_CNT2",      1},
+	{NFC_REG_ECC_CNT3,      "NFC_ECC_CNT3",      1},
+	{NFC_REG_USER_DATA(0),  "NFC_USER_DB",      16},
+	{NFC_REG_SPARE_AREA,    "NFC_ECC_CNT0",      1},
+	{NFC_RAM0_BASE,         "NFC_RAM0",        256},
+	{NFC_RAM1_BASE,         "NFC_RAM1",        256},
+	{0,                     "",                  0}
+};
+
+static void print_reg(struct reg_info* reg)
 {
 	int i, j;
+
+	printk("%s =", reg->name);
+	/*
+	if (reg->len < 4) {
+		for (i = 0; i < reg->len; i += 4)
+			printk(" %.8x", readl(reg->addr + i));
+		printk("\n");
+	}
+	else {
+	*/
+
+	printk("\n");
+	for (i = 0; i < reg->len / 8; i += 4) {
+		printk("%.8x:", reg->addr + i * 8);
+		for (j = 0; j < 8; j++)
+			printk(" %.8x", readl(reg->addr + (i * 8 + j)));
+		printk("\n");
+	}
+}
+
+static void print_regs(void)
+{
+	int i;
+	printk(" === NFC register dump ===\n");
+	for (i = 0; nfc_regs[i].addr != 0; i++)
+		print_reg(&nfc_regs[i]);
+}
+
+/* 2k to cover the max Hynix page size. */
+#define PRINT_BUFFER_SIZE 16384
+
+static void print_page(struct mtd_info *mtd, int page, bool full)
+{
+	int i, j, saved_read_offset = read_offset;
 	u8* buff;
 
-	buff = kzalloc(mtd->writesize, GFP_KERNEL);
-	nfc_cmdfunc(mtd, NAND_CMD_READ0, 0, page);
-	nfc_read_buf(mtd, buff, 6);
-	DBG_INFO("READ: %.2x %.2x %.2x %.2x %.2x %.2x %.2x %.2x\n",
-		 buff[0], buff[1], buff[2], buff[3],
-		 buff[4], buff[5], buff[6], buff[7]);
-	kfree(buff);
+	buff = kmalloc(PRINT_BUFFER_SIZE, GFP_KERNEL);
+ 	if (!buff)
+ 		return;
 
-	buff = kzalloc(mtd->oobsize, GFP_KERNEL);
+	read_offset = 0;
+	memset(buff, 0xEE, PRINT_BUFFER_SIZE);
+	nfc_cmdfunc(mtd, NAND_CMD_READ0, 0, page);
+	if (full) {
+		DBG_INFO("READ:\n");
+		for (i = 0; i < mtd->writesize / 32; i++) {
+			for (j = 0; j < 32; j++)
+				printk("%.2x ", buff[32 * i + j]);
+			printk("\n");
+		}
+	}
+	else {
+		nfc_read_buf(mtd, buff, 6);
+		DBG_INFO("READ: %.2x %.2x %.2x %.2x %.2x %.2x %.2x %.2x\n",
+			 buff[0], buff[1], buff[2], buff[3],
+			 buff[4], buff[5], buff[6], buff[7]);
+	}
+
+	print_regs();
+
+	read_offset = mtd->writesize;
+	memset(buff, 0xBB, PRINT_BUFFER_SIZE);
 	nfc_cmdfunc(mtd, NAND_CMD_READOOB, 0, page);
 	nfc_read_buf(mtd, buff, mtd->oobsize);
 	DBG_INFO("OOB:\n");
@@ -958,29 +1048,45 @@ static void print_page(struct mtd_info *mtd, int page)
 			printk("%.2x ", buff[32 * i + j]);
 		printk("\n");
 	}
+	read_offset = saved_read_offset;
+
+	print_regs();
+
 	kfree(buff);
 }
 
 static void test_nfc(struct mtd_info *mtd)
 {
-	int i, j, n=0;
+//	int i, j, n=0;
 	struct nand_chip *nand = mtd->priv;
 	int page = 1280;
-	u8 buff[2048];
-	int blocks = 2, num_blocks = mtd->writesize / 1024;
+//	u8 buff[PRINT_BUFFER_SIZE];
+//	int blocks = 2, num_blocks = mtd->writesize / 1024;
+	int saved_random_switch = random_switch;
+	int saved_hwecc_switch  = hwecc_switch;
 
 	DBG_INFO("============== TEST NFC ================\n");
-	memset(buff, 0, 2048);
+//	memset(buff, 0, 2048);
 
 	// read page
-	print_page(mtd, page);
+	DBG_INFO("Test: read page %d\n", page);
+	print_page(mtd, page, 0);
 
 	// erase block
+	DBG_INFO("Test: erase block of page %d\n", page);
 	nfc_cmdfunc(mtd, NAND_CMD_ERASE1, 0, page);
 	nfc_cmdfunc(mtd, NAND_CMD_ERASE2, -1, -1);
 	nfc_wait(mtd, nand);
-	print_page(mtd, page);
+	print_page(mtd, page, 0);
 
+	DBG_INFO("Test: print the erased page without randomizer or ECC\n");
+	hwecc_switch = 0;
+	random_switch = 0;
+	print_page(mtd, page, 0);
+	random_switch = saved_random_switch;
+	hwecc_switch = saved_hwecc_switch;
+
+	/*
 	// write block
 	nfc_cmdfunc(mtd, NAND_CMD_SEQIN, 0, page);
 	for (i = 0; i < blocks; i++) {
@@ -998,6 +1104,7 @@ static void test_nfc(struct mtd_info *mtd)
 	nfc_cmdfunc(mtd, NAND_CMD_PAGEPROG, -1, -1);
 	nfc_wait(mtd, nand);
 	print_page(mtd, page);
+	*/
 
 /*
 	// test oob write
@@ -1011,6 +1118,7 @@ static void test_nfc(struct mtd_info *mtd)
 */
 }
 
+/*
 // Test unit ops
 static void test_ops(struct mtd_info *mtd)
 {
@@ -1047,6 +1155,7 @@ static void test_ops(struct mtd_info *mtd)
 			 readb(NFC_RAM0_BASE + 4),
 			 readb(NFC_RAM0_BASE + 5));
 }
+*/
 
 int nfc_second_init(struct mtd_info *mtd)
 {
@@ -1168,20 +1277,15 @@ int nfc_second_init(struct mtd_info *mtd)
 	DBG_INFO("OOB size = %d  page size = %d  block size = %d  total size = %lld\n",
 			 mtd->oobsize, mtd->writesize, mtd->erasesize, mtd->size);
 
-	// register IRQ
-	if ((err = request_irq(SW_INT_IRQNO_NAND, nfc_interrupt_handler, IRQF_DISABLED, "NFC", mtd)) < 0) {
-		ERR_INFO("request IRQ fail\n");
-		goto free_write_out;
-	}
-
 	// test command
 	test_nfc(mtd);
 	//test_ops(mtd);
-	//print_page(mtd, 0);
+	DBG_INFO("Test: print page 0\n");
+	print_page(mtd, 0, 1);
 
 	return 0;
 
-free_write_out:
+// free_write_out:
 	kfree(write_buffer);
 free_read_out:
 	kfree(read_buffer);
@@ -1193,7 +1297,6 @@ out:
 
 void nfc_exit(struct mtd_info *mtd)
 {
-	free_irq(SW_INT_IRQNO_NAND, mtd);
 	dma_unmap_single(NULL, read_buffer_dma, buffer_size, DMA_FROM_DEVICE);
 	dma_unmap_single(NULL, write_buffer_dma, buffer_size, DMA_TO_DEVICE);
 	dma_nand_release(dma_hdle);
