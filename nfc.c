@@ -462,9 +462,9 @@ static void nfc_cmdfunc(struct mtd_info *mtd, unsigned command, int column,
 			sector_count = mtd->writesize / 1024;
 			read_size = mtd->writesize;
 			do_enable_ecc = 1;
+			do_enable_random = 1;
 			//DBG_INFO("cmdfunc read %d %d\n", column, page_addr);
 		}
-		do_enable_random = 1;
 		/* for ECC debugging purposes */
 		sunxi_nand_read_page_addr = page_addr;
 
@@ -1061,6 +1061,35 @@ static void print_page(struct mtd_info *mtd, int page, bool full)
 	pr_info(" ===== PAGE %d READ END =====\n", page);
 }
 
+static void print_page1k(struct mtd_info *mtd, int page)
+{
+	int i, j, saved_read_offset = read_offset;
+	u8* buff;
+
+	pr_info(" ===== PAGE %d READ 1K MODE =====\n", page);
+
+	buff = kmalloc(1024, GFP_KERNEL);
+ 	if (!buff)
+ 		return;
+
+	read_offset = 0;
+	memset(buff, 0xEE, 1024);
+	nfc_read_page1k(0, buff);
+	pr_info("READ 1K:\n");
+	nfc_read_buf(mtd, buff, 1024);
+	for (i = 0; i < 1024 / 32; i++) {
+		for (j = 0; j < 32; j++)
+			printk("%.2x ", buff[32 * i + j]);
+		printk("\n");
+	}
+	pr_info(" ***** REGISTERS AFTER READ0 *****\n");
+	print_regs();
+	read_offset = saved_read_offset;
+
+	kfree(buff);
+	pr_info(" ===== PAGE %d READ 1K MODE END =====\n", page);
+}
+
 static void test_nfc(struct mtd_info *mtd)
 {
 //	int i, j, n=0;
@@ -1284,11 +1313,11 @@ int nfc_second_init(struct mtd_info *mtd)
 			 mtd->oobsize, mtd->writesize, mtd->erasesize, mtd->size);
 
 	// test command
-	test_nfc(mtd);
-	//test_ops(mtd);
+	//test_nfc(mtd);
+	///test_ops(mtd);
 	DBG_INFO("Test: print page 0\n");
 	print_page(mtd, 0, 1);
-
+	print_page1k(mtd, 0);
 	return 0;
 
 // free_write_out:

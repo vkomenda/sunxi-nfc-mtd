@@ -114,6 +114,7 @@ static int __devexit nand_remove(struct platform_device *pdev)
 	platform_set_drvdata(pdev, NULL);
 	mtd_device_unregister(&info->mtd);
 	nand_release(&info->mtd);
+	free_irq(SW_INT_IRQNO_NAND, &info->mtd);
 	nfc_exit(&info->mtd);
 	kfree(info);
 	return 0;
@@ -200,7 +201,6 @@ static int __init nand_init(void)
 static void __exit nand_exit(void)
 {
 	int nand_used = 0;
-	struct sunxi_nand_info *info = platform_get_drvdata(&plat_device);
 
 	if (script_parser_fetch("nand_para", "nand_used", &nand_used, sizeof(int)))
 		ERR_INFO("nand init fetch emac using configuration failed\n");
@@ -211,7 +211,6 @@ static void __exit nand_exit(void)
 	}
 
 	nand1k_exit();
-	free_irq(SW_INT_IRQNO_NAND, &info->mtd);
 	platform_device_unregister(&plat_device);
 	platform_driver_unregister(&plat_driver);
 	DBG_INFO("nand driver : bye bye\n");
