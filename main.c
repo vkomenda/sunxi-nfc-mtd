@@ -83,7 +83,7 @@ static int __devinit nand_probe(struct platform_device *pdev)
 
 	// second phase scan
 	if ((err = nand_scan_tail(&info->mtd)) < 0) {
-		ERR_INFO("nand scan tail fail\n");
+		ERR_INFO("nand_scan_tail ERROR %d\n", err);
 		goto out_irq;
 	}
 

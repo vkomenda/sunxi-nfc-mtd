@@ -1006,7 +1006,6 @@ static void print_regs(void)
 		print_reg(&nfc_regs[i]);
 }
 
-/* 2k to cover the max Hynix page size. */
 #define PRINT_BUFFER_SIZE 16384
 
 static void print_page(struct mtd_info *mtd, int page, bool full)
@@ -1063,7 +1062,7 @@ static void print_page(struct mtd_info *mtd, int page, bool full)
 
 static void print_page1k(struct mtd_info *mtd, int page)
 {
-	int i, j, saved_read_offset = read_offset;
+	int i, j;
 	u8* buff;
 
 	pr_info(" ===== PAGE %d READ 1K MODE =====\n", page);
@@ -1076,7 +1075,7 @@ static void print_page1k(struct mtd_info *mtd, int page)
 	memset(buff, 0xEE, 1024);
 	nfc_read_page1k(0, buff);
 	pr_info("READ 1K:\n");
-	nfc_read_buf(mtd, buff, 1024);
+//	nfc_read_buf(mtd, buff, 1024);
 	for (i = 0; i < 1024 / 32; i++) {
 		for (j = 0; j < 32; j++)
 			printk("%.2x ", buff[32 * i + j]);
@@ -1084,7 +1083,6 @@ static void print_page1k(struct mtd_info *mtd, int page)
 	}
 	pr_info(" ***** REGISTERS AFTER READ0 *****\n");
 	print_regs();
-	read_offset = saved_read_offset;
 
 	kfree(buff);
 	pr_info(" ===== PAGE %d READ 1K MODE END =====\n", page);
@@ -1200,6 +1198,9 @@ int nfc_second_init(struct mtd_info *mtd)
 	struct nand_chip_param *nand_chip_param, *chip_param = NULL;
 	struct nand_chip *nand = mtd->priv;
 
+	// FIXME: assert the first chip in case chip select was set to -1 (all)
+	nfc_select_chip(NULL, 0);
+
 	// get nand chip id
 	nfc_cmdfunc(mtd, NAND_CMD_READID, 0, -1);
 	for (i = 0; i < 8; i++)
@@ -1232,10 +1233,10 @@ int nfc_second_init(struct mtd_info *mtd)
 	}
 
 	// set final NFC clock freq
-	if (chip_param->clock_freq > 30)
-		chip_param->clock_freq = 30;
+//	if (chip_param->clock_freq > 30)
+//		chip_param->clock_freq = 30;
 	sunxi_set_nand_clock(chip_param->clock_freq);
-	DBG_INFO("set final clock freq to %dMHz\n", chip_param->clock_freq);
+	DBG_INFO("set clock freq to %dMHz\n", chip_param->clock_freq);
 
 	// disable interrupt
 	writel(0, NFC_REG_INT);
@@ -1280,7 +1281,8 @@ int nfc_second_init(struct mtd_info *mtd)
 	sunxi_ecclayout.oobfree->length = mtd->writesize / 1024 * 4 - 2;
 	nand->ecc.layout = &sunxi_ecclayout;
 	nand->ecc.size = mtd->writesize;
-	nand->ecc.bytes = 0;
+	nand->ecc.bytes = 0;  // FIXME?
+	nand->ecc.strength = 64;
 
 	// setup DMA
 	dma_hdle = dma_nand_request(1);
