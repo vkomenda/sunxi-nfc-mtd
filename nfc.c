@@ -22,6 +22,7 @@
 #include <linux/string.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/nand.h>
+#include <linux/sizes.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/dma-mapping.h>
@@ -753,11 +754,11 @@ struct save_1k_mode {
 	uint32_t spare_area;
 };
 
-static void enter_1k_mode(struct save_1k_mode *save)
+static void set_pagesize(u32 size, struct save_1k_mode *save)
 {
 	uint32_t ctl;
 
-	DBG_INFO("+mode1k\n");
+	DBG_INFO("+page %d bytes\n", size);
 	ctl = readl(NFC_REG_CTL);
 	save->ctl = ctl;
 	ctl &= ~NFC_PAGE_SIZE;
@@ -769,18 +770,18 @@ static void enter_1k_mode(struct save_1k_mode *save)
 
 	ctl = readl(NFC_REG_SPARE_AREA);
 	save->spare_area = ctl;
-	writel(1024, NFC_REG_SPARE_AREA);
+	writel(size, NFC_REG_SPARE_AREA);
 }
 
-static void exit_1k_mode(struct save_1k_mode *save)
+static void restore_pagesize(struct save_1k_mode *save)
 {
-	DBG_INFO("-mode1k\n");
+	DBG_INFO("-page\n");
 	writel(save->ctl, NFC_REG_CTL);
 	writel(save->ecc_ctl, NFC_REG_ECC_CTL);
 	writel(save->spare_area, NFC_REG_SPARE_AREA);
 }
 
-void nfc_read_page1k(uint32_t page_addr, void *buff)
+void nfc_read_set_pagesize(uint32_t page_addr, u32 size, void *buff)
 {
 	struct save_1k_mode save;
 	uint32_t cfg = NAND_CMD_READ0 | NFC_SEQ | NFC_SEND_CMD1 | NFC_DATA_TRANS | NFC_SEND_ADR |
@@ -790,10 +791,10 @@ void nfc_read_page1k(uint32_t page_addr, void *buff)
 
 	wait_cmdfifo_free();
 
-	enter_1k_mode(&save);
+	set_pagesize(size, &save);
 
 	writel(readl(NFC_REG_CTL) | NFC_RAM_METHOD, NFC_REG_CTL);
-	dma_nand_config_start(dma_hdle, 0, (uint32_t)buff, 1024);
+	dma_nand_config_start(dma_hdle, 0, (uint32_t)buff, size);
 
 	writel(page_addr << 16, NFC_REG_ADDR_LOW);
 	writel(page_addr >> 16, NFC_REG_ADDR_HIGH);
@@ -814,12 +815,12 @@ void nfc_read_page1k(uint32_t page_addr, void *buff)
 	check_ecc(1);
 	disable_random();
 
-	exit_1k_mode(&save);
+	restore_pagesize(&save);
 
 	nfc_select_chip(NULL, -1);
 }
 
-void nfc_write_page1k(uint32_t page_addr, void *buff)
+void nfc_write_set_pagesize(uint32_t page_addr, u32 size, void *buff)
 {
 	struct save_1k_mode save;
 	uint32_t cfg = NAND_CMD_SEQIN | NFC_SEQ | NFC_SEND_CMD1 | NFC_DATA_TRANS | NFC_SEND_ADR |
@@ -830,10 +831,10 @@ void nfc_write_page1k(uint32_t page_addr, void *buff)
 
 	wait_cmdfifo_free();
 
-	enter_1k_mode(&save);
+	set_pagesize(size, &save);
 
 	writel(readl(NFC_REG_CTL) | NFC_RAM_METHOD, NFC_REG_CTL);
-	dma_nand_config_start(dma_hdle, 1, (uint32_t)buff, 1024);
+	dma_nand_config_start(dma_hdle, 1, (uint32_t)buff, size);
 
 	writel(page_addr << 16, NFC_REG_ADDR_LOW);
 	writel(page_addr >> 16, NFC_REG_ADDR_HIGH);
@@ -853,7 +854,7 @@ void nfc_write_page1k(uint32_t page_addr, void *buff)
 	disable_ecc();
 	disable_random();
 
-	exit_1k_mode(&save);
+	restore_pagesize(&save);
 
 	nfc_select_chip(NULL, -1);
 }
@@ -1060,23 +1061,23 @@ static void print_page(struct mtd_info *mtd, int page, bool full)
 	pr_info(" ===== PAGE %d READ END =====\n", page);
 }
 
-static void print_page1k(struct mtd_info *mtd, int page)
+static void print_set_pagesize(struct mtd_info *mtd, u32 size, int page)
 {
 	int i, j;
 	u8* buff;
 
 	pr_info(" ===== PAGE %d READ 1K MODE =====\n", page);
 
-	buff = kmalloc(1024, GFP_KERNEL);
+	buff = kmalloc(size, GFP_KERNEL);
  	if (!buff)
  		return;
 
 	read_offset = 0;
-	memset(buff, 0xEE, 1024);
-	nfc_read_page1k(0, buff);
-	pr_info("READ 1K:\n");
+	memset(buff, 0xEE, size);
+	nfc_read_set_pagesize(0, size, buff);
+	pr_info("READ %d BYTES:\n", size);
 //	nfc_read_buf(mtd, buff, 1024);
-	for (i = 0; i < 1024 / 32; i++) {
+	for (i = 0; i < size / 32; i++) {
 		for (j = 0; j < 32; j++)
 			printk("%.2x ", buff[32 * i + j]);
 		printk("\n");
@@ -1085,7 +1086,7 @@ static void print_page1k(struct mtd_info *mtd, int page)
 	print_regs();
 
 	kfree(buff);
-	pr_info(" ===== PAGE %d READ 1K MODE END =====\n", page);
+	pr_info(" ===== PAGE %d READ %d BYTES END =====\n", page, size);
 }
 
 static void test_nfc(struct mtd_info *mtd)
@@ -1280,9 +1281,11 @@ int nfc_second_init(struct mtd_info *mtd)
 	sunxi_ecclayout.oobfree->offset = 1;
 	sunxi_ecclayout.oobfree->length = mtd->writesize / 1024 * 4 - 2;
 	nand->ecc.layout = &sunxi_ecclayout;
-	nand->ecc.size = mtd->writesize;
-	nand->ecc.bytes = 0;  // FIXME?
-	nand->ecc.strength = 64;
+
+	// FIXME: remove the internal configuration database
+	nand->ecc.bytes = 0;
+	nand->ecc.strength = 40;
+	nand->ecc.size = SZ_1K;
 
 	// setup DMA
 	dma_hdle = dma_nand_request(1);
@@ -1319,7 +1322,10 @@ int nfc_second_init(struct mtd_info *mtd)
 	///test_ops(mtd);
 	DBG_INFO("Test: print page 0\n");
 	print_page(mtd, 0, 1);
-	print_page1k(mtd, 0);
+	print_set_pagesize(mtd, SZ_1K, 0);
+	print_set_pagesize(mtd, SZ_2K, 0);
+	print_set_pagesize(mtd, SZ_4K, 0);
+	print_set_pagesize(mtd, SZ_8K, 0);
 	return 0;
 
 // free_write_out:

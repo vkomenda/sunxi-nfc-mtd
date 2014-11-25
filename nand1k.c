@@ -20,6 +20,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/device.h>
+#include <linux/sizes.h>
 #include <linux/slab.h>
 #include <linux/io.h>
 #include <linux/uaccess.h>
@@ -39,7 +40,7 @@
  * The size of the read/write buffer enough to fit either the 1k of main data or
  * the whole of the OOB area.
  */
-#define RW_BUFFER_SIZE 2048
+#define RW_BUFFER_SIZE SZ_4K
 
 static struct class *dev_class;
 static int nand1k_major;
@@ -63,20 +64,20 @@ static int nand1k_read(struct file *filp, char __user *buff, size_t count, loff_
 
 	printk(KERN_INFO "nand1k read off=%llx count=%x\n", offs, count);
 
-	if (offs > 128 * 1024 || offs < 0 ||
-		count < 0 || count > 128 * 1024 ||
-		offs + count > 128 * 1024) {
+	if (offs > 128 * SZ_1K || offs < 0 ||
+		count < 0 || count > 128 * SZ_1K ||
+		offs + count > 128 * SZ_1K) {
 		printk(KERN_ERR "nand1k is restricted to access the first 128 1K pages\n");
 		return -EINVAL;
 	}
 
 	while (size < count) {
-		page = offs / 1024;
-		offset = offs % 1024;
-		len = 1024 - offset;
+		page = offs / SZ_1K;
+		offset = offs % SZ_1K;
+		len = SZ_1K - offset;
 		if (len > count - size)
 			len = count - size;
-		nfc_read_page1k(page, rw_buff);
+		nfc_read_set_pagesize(page, SZ_1K, rw_buff);
 		ret = copy_to_user(buff, rw_buff + offset, len);
 		printk(KERN_INFO "nand1k read page=%x offset=%x len=%x\n", page, offset, len);
 		printk(KERN_INFO "nand1k %x %x %x %x %x %x %x %x\n",
@@ -101,28 +102,28 @@ static int nand1k_write(struct file *filp, const char __user *buff, size_t count
 
 	printk(KERN_INFO "nand1k write off=%llx count=%x\n", offs, count);
 
-	if (offs > 128 * 1024 || offs < 0 ||
-		count < 0 || count > 128 * 1024 ||
-		offs + count > 128 * 1024) {
+	if (offs > 128 * SZ_1K || offs < 0 ||
+		count < 0 || count > 128 * SZ_1K ||
+		offs + count > 128 * SZ_1K) {
 		printk(KERN_ERR "nand1k is restricted to access the first 128 1K pages\n");
 		return -EINVAL;
 	}
 
-	if ((offs & (1024 - 1)) || (count & (1024 - 1))) {
+	if ((offs & (SZ_1K - 1)) || (count & (SZ_1K - 1))) {
 		printk(KERN_ERR "nand1k can't write non-1K-aligned data\n");
 		return -EINVAL;
 	}
 
 	while (size < count) {
-		ret = copy_from_user(rw_buff, buff, 1024);
+		ret = copy_from_user(rw_buff, buff, SZ_1K);
 		if (ret)
 			break;
 
-		nfc_write_page1k(offs / 1024, rw_buff);
+		nfc_write_set_pagesize(offs / SZ_1K, SZ_1K, rw_buff);
 
-		size += 1024;
-		offs += 1024;
-		buff += 1024;
+		size += SZ_1K;
+		offs += SZ_1K;
+		buff += SZ_1K;
 	}
 
 	*f_pos += size;
