@@ -238,7 +238,7 @@ static inline int check_rb_ready(int rb)
 	return (readl(NFC_REG_ST) & (NFC_RB_STATE0 << (rb & 0x3))) ? 1 : 0;
 }
 
-static void nand1k_enable_random(void)
+static void enable_random_preset(void)
 {
 	if (random_switch) {
 		uint32_t ctl;
@@ -248,7 +248,7 @@ static void nand1k_enable_random(void)
 		ctl &= ~NFC_RANDOM_SEED;
 		ctl |= 0x4a80 << 16;
 		writel(ctl, NFC_REG_ECC_CTL);
-		DBG_INFO("+random:1k\n");
+		DBG_INFO("+random:preset\n");
 	}
 }
 
@@ -439,7 +439,7 @@ static void nfc_cmdfunc(struct mtd_info *mtd, unsigned command, int column,
 		break;
 	case NAND_CMD_PARAM:
 		addr_cycle = 1;
-		byte_count = 1024;
+		byte_count = SZ_1K;
 		wait_rb_flag = 1;
 		break;
 	case NAND_CMD_RNDOUT:
@@ -454,13 +454,13 @@ static void nfc_cmdfunc(struct mtd_info *mtd, unsigned command, int column,
 		if (command == NAND_CMD_READOOB) {
 			cfg = NAND_CMD_READ0;
 			// sector num to read
-			sector_count = 1024 / 1024;
-			read_size = 1024;
+			sector_count = SZ_1K / SZ_1K;
+			read_size = SZ_1K;
 			// OOB offset
 			column += mtd->writesize;
 		}
 		else {
-			sector_count = mtd->writesize / 1024;
+			sector_count = mtd->writesize / SZ_1K;
 			read_size = mtd->writesize;
 			do_enable_ecc = 1;
 			do_enable_random = 1;
@@ -476,7 +476,7 @@ static void nfc_cmdfunc(struct mtd_info *mtd, unsigned command, int column,
 		dma_nand_config_start(dma_hdle, 0, (uint32_t)read_buffer, read_size);
 		addr_cycle = 5;
 		// RAM0 is 1K size
-		byte_count =1024;
+		byte_count = SZ_1K;
 		wait_rb_flag = 1;
 		// 0x30 for 2nd cycle of read page
 		// 0x05+0xe0 is the random data output command
@@ -507,11 +507,11 @@ static void nfc_cmdfunc(struct mtd_info *mtd, unsigned command, int column,
 		page_addr = program_page;
 		// for write OOB
 		if (column == mtd->writesize) {
-			sector_count = 1024 /1024;
-			write_size = 1024;
+			sector_count = SZ_1K / SZ_1K;
+			write_size = SZ_1K;
 		}
 		else if (column == 0) {
-			sector_count = mtd->writesize / 1024;
+			sector_count = mtd->writesize / SZ_1K;
 			do_enable_ecc = 1;
 			write_size = mtd->writesize;
 			for (i = 0; i < sector_count; i++)
@@ -527,7 +527,7 @@ static void nfc_cmdfunc(struct mtd_info *mtd, unsigned command, int column,
 		writel(readl(NFC_REG_CTL) | NFC_RAM_METHOD, NFC_REG_CTL);
 		dma_nand_config_start(dma_hdle, 1, (uint32_t)write_buffer, write_size);
 		// RAM0 is 1K size
-		byte_count =1024;
+		byte_count = SZ_1K;
 		writel(0x00008510, NFC_REG_WCMD_SET);
 		cfg |= NFC_SEND_CMD2 | NFC_DATA_SWAP_METHOD | NFC_ACCESS_DIR;
 		cfg |= 2 << 30;
@@ -742,19 +742,19 @@ static int nfc_ecc_correct(struct mtd_info *mtd, uint8_t *dat, uint8_t *read_ecc
 	if (!hwecc_switch)
 		return 0;
 
-	return check_ecc(mtd->writesize / 1024);
+	return check_ecc(mtd->writesize / SZ_1K);
 }
 
 //////////////////////////////////////////////////////////////////////////////////
 // 1K mode for SPL read/write
 
-struct save_1k_mode {
+struct save_sizes {
 	uint32_t ctl;
 	uint32_t ecc_ctl;
 	uint32_t spare_area;
 };
 
-static void set_pagesize(u32 size, struct save_1k_mode *save)
+static void set_pagesize(u32 size, struct save_sizes *save)
 {
 	uint32_t ctl;
 
@@ -773,7 +773,7 @@ static void set_pagesize(u32 size, struct save_1k_mode *save)
 	writel(size, NFC_REG_SPARE_AREA);
 }
 
-static void restore_pagesize(struct save_1k_mode *save)
+static void restore_pagesize(struct save_sizes *save)
 {
 	DBG_INFO("-page\n");
 	writel(save->ctl, NFC_REG_CTL);
@@ -783,9 +783,13 @@ static void restore_pagesize(struct save_1k_mode *save)
 
 void nfc_read_set_pagesize(uint32_t page_addr, u32 size, void *buff)
 {
-	struct save_1k_mode save;
-	uint32_t cfg = NAND_CMD_READ0 | NFC_SEQ | NFC_SEND_CMD1 | NFC_DATA_TRANS | NFC_SEND_ADR |
-		NFC_SEND_CMD2 | ((5 - 1) << 16) | NFC_WAIT_FLAG | NFC_DATA_SWAP_METHOD | (2 << 30);
+	struct save_sizes save;
+	uint32_t cfg = NFC_SEND_CMD1 | NFC_DATA_TRANS | NFC_SEND_ADR |
+		NFC_SEND_CMD2 | ((5 - 1) << 16) | NFC_WAIT_FLAG |
+		NFC_DATA_SWAP_METHOD | (2 << 30);
+
+	if (size == SZ_1K)
+		cfg |= NFC_SEQ;
 
 	nfc_select_chip(NULL, 0);
 
@@ -794,21 +798,25 @@ void nfc_read_set_pagesize(uint32_t page_addr, u32 size, void *buff)
 	set_pagesize(size, &save);
 
 	writel(readl(NFC_REG_CTL) | NFC_RAM_METHOD, NFC_REG_CTL);
-	dma_nand_config_start(dma_hdle, 0, (uint32_t)buff, size);
+	dma_nand_config_start(dma_hdle, 0, (uint32_t)buff, SZ_1K); // FIXME: size
 
 	writel(page_addr << 16, NFC_REG_ADDR_LOW);
 	writel(page_addr >> 16, NFC_REG_ADDR_HIGH);
-	writel(size, NFC_REG_CNT);
+	writel(SZ_1K, NFC_REG_CNT);
 	writel(0x00e00530, NFC_REG_RCMD_SET);
 	writel(size / SZ_1K, NFC_REG_SECTOR_NUM);
 
-	nand1k_enable_random();
+	enable_random_preset();
 	enable_ecc(1);
 
+	pr_debug("read: write command\n");
 	writel(cfg, NFC_REG_CMD);
 
+	pr_debug("read: wait DMA finishes\n");
 	dma_nand_wait_finish();
+	pr_debug("read: wait command FIFO frees\n");
 	wait_cmdfifo_free();
+	pr_debug("read: wait command finishes\n");
 	wait_cmd_finish();
 
 	disable_ecc();
@@ -822,7 +830,7 @@ void nfc_read_set_pagesize(uint32_t page_addr, u32 size, void *buff)
 
 void nfc_write_set_pagesize(uint32_t page_addr, u32 size, void *buff)
 {
-	struct save_1k_mode save;
+	struct save_sizes save;
 	uint32_t cfg = NAND_CMD_SEQIN | NFC_SEQ | NFC_SEND_CMD1 | NFC_DATA_TRANS | NFC_SEND_ADR |
 		NFC_SEND_CMD2 | ((5 - 1) << 16) | NFC_WAIT_FLAG | NFC_DATA_SWAP_METHOD | NFC_ACCESS_DIR |
 		(2 << 30);
@@ -838,11 +846,11 @@ void nfc_write_set_pagesize(uint32_t page_addr, u32 size, void *buff)
 
 	writel(page_addr << 16, NFC_REG_ADDR_LOW);
 	writel(page_addr >> 16, NFC_REG_ADDR_HIGH);
-	writel(1024, NFC_REG_CNT);
+	writel(SZ_1K, NFC_REG_CNT);
 	writel(0x00008510, NFC_REG_WCMD_SET);
-	writel(1, NFC_REG_SECTOR_NUM);
+	writel(size / SZ_1K, NFC_REG_SECTOR_NUM);
 
-	nand1k_enable_random();
+	enable_random_preset();
 	enable_ecc(1);
 
 	writel(cfg, NFC_REG_CMD);
@@ -1007,7 +1015,7 @@ static void print_regs(void)
 		print_reg(&nfc_regs[i]);
 }
 
-#define PRINT_BUFFER_SIZE 16384
+#define PRINT_BUFFER_SIZE SZ_16K
 
 static void print_page(struct mtd_info *mtd, int page, bool full)
 {
@@ -1076,7 +1084,6 @@ static void print_set_pagesize(struct mtd_info *mtd, u32 size, int page)
 	memset(buff, 0xEE, size);
 	nfc_read_set_pagesize(0, size, buff);
 	pr_info("READ %d BYTES:\n", size);
-//	nfc_read_buf(mtd, buff, 1024);
 	for (i = 0; i < size / 32; i++) {
 		for (j = 0; j < 32; j++)
 			printk("%.2x ", buff[32 * i + j]);
