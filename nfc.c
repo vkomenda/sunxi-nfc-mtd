@@ -798,9 +798,9 @@ void nfc_read_set_pagesize(uint32_t page_addr, u32 size, void *buff)
 
 	writel(page_addr << 16, NFC_REG_ADDR_LOW);
 	writel(page_addr >> 16, NFC_REG_ADDR_HIGH);
-	writel(1024, NFC_REG_CNT);
+	writel(size, NFC_REG_CNT);
 	writel(0x00e00530, NFC_REG_RCMD_SET);
-	writel(1, NFC_REG_SECTOR_NUM);
+	writel(size / SZ_1K, NFC_REG_SECTOR_NUM);
 
 	nand1k_enable_random();
 	enable_ecc(1);
@@ -1066,7 +1066,7 @@ static void print_set_pagesize(struct mtd_info *mtd, u32 size, int page)
 	int i, j;
 	u8* buff;
 
-	pr_info(" ===== PAGE %d READ 1K MODE =====\n", page);
+	pr_info(" ===== PAGE %d READ %d BYTES =====\n", page, size);
 
 	buff = kmalloc(size, GFP_KERNEL);
  	if (!buff)
