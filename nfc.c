@@ -404,7 +404,7 @@ static void disable_ecc(void)
 static void nfc_select_chip(struct mtd_info *mtd, int chip)
 {
 	uint32_t ctl;
-	DBG_INFO(":select chip %d\n", chip);
+	DBG_INFO(":chipsel %d\n", chip);
 	// A10 has 8 CE pin to support 8 flash chips
 	ctl = readl(NFC_REG_CTL);
 	ctl &= ~NFC_CE_SEL;
@@ -421,7 +421,7 @@ static void nfc_cmdfunc(struct mtd_info *mtd, unsigned command, int column,
 	int addr_cycle, wait_rb_flag, byte_count, sector_count;
 	addr_cycle = wait_rb_flag = byte_count = sector_count = 0;
 
-	DBG_INFO(":command %x column %x page address %x\n",
+	DBG_INFO(":cmd %x col %x pg %x\n",
 		 command, column, page_addr);
 	wait_cmdfifo_free();
 
@@ -1330,9 +1330,9 @@ int nfc_second_init(struct mtd_info *mtd)
 	DBG_INFO("Test: print page 0\n");
 	print_page(mtd, 0, 1);
 	print_set_pagesize(mtd, SZ_1K, 0);
-	print_set_pagesize(mtd, SZ_2K, 0);
-	print_set_pagesize(mtd, SZ_4K, 0);
-	print_set_pagesize(mtd, SZ_8K, 0);
+//	print_set_pagesize(mtd, SZ_2K, 0);
+//	print_set_pagesize(mtd, SZ_4K, 0);
+//	print_set_pagesize(mtd, SZ_8K, 0);
 	return 0;
 
 // free_write_out:
