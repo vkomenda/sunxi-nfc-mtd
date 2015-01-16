@@ -2,6 +2,7 @@
  * main.c
  *
  * Copyright (C) 2013 Qiang Yu <yuq825@gmail.com>
+ *               2014 Vladimir Komendantskiy
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,6 +24,7 @@
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
 #include <linux/mtd/mtd.h>
+#include <linux/mtd/partitions.h>
 #include <linux/mtd/nand.h>
 #include <plat/sys_config.h>
 
@@ -32,10 +34,38 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("yuq");
 
-#define	DRIVER_NAME	"mtd-nand-sunxi"
+#define	DRIVER_NAME "mtd-nand-sunxi"
 
 extern irqreturn_t nfc_interrupt_handler(int irq, void *dev_id);
 
+extern int debug;
+
+static const char* const sunxi_mtd_part_types[] = {
+	"cmdlinepart",
+	NULL
+};
+
+/*
+ * Default partitions that are set up if the kernel command-line "mtdparts"
+ * option did not parse. Chip size is fixed to 8 GiB.
+ */
+static struct mtd_partition sunxi_mtd_partitions[] = {
+	{
+		.name   = "SPL",
+		.offset = 0,
+		.size   = SZ_4M,
+	},
+	{
+		.name   = "U-Boot",
+		.offset = SZ_4M,
+		.size   = SZ_4M,
+	},
+	{
+		.name   = "main",
+		.offset = SZ_8M,
+		.size   = 4 * (uint64_t) SZ_1G - SZ_8M,
+	},
+};
 
 struct sunxi_nand_info {
 	struct mtd_info mtd;
@@ -47,8 +77,10 @@ static int __devinit nand_probe(struct platform_device *pdev)
 	int err;
 	struct sunxi_nand_info *info;
 
+	DBG("");
+
 	if ((info = kzalloc(sizeof(*info), GFP_KERNEL)) == NULL) {
-		ERR_INFO("alloc nand info fail\n");
+		DBG("no memory");
 		err = -ENOMEM;
 		goto out;
 	}
@@ -58,37 +90,41 @@ static int __devinit nand_probe(struct platform_device *pdev)
 	info->mtd.owner = THIS_MODULE;
 
 	if ((err = nfc_first_init(&info->mtd)) < 0) {
-		ERR_INFO("nfc first inti fail\n");
+		pr_err(pr_fmt("first init ERROR %d\n"), err);
 		goto out_free_info;
 	}
 
 	// first scan to find the device and get the page size
 	if ((err = nand_scan_ident(&info->mtd, 1, NULL)) < 0) {
-		ERR_INFO("nand scan ident fail\n");
+		pr_err(pr_fmt("ID scan ERROR %d\n"), err);
 		goto out_nfc_exit;
 	}
 
 	// init NFC with flash chip info got from first scan
 	if ((err = nfc_second_init(&info->mtd)) < 0) {
-		ERR_INFO("nfc second init fail\n");
+		pr_err(pr_fmt("second init ERROR %d\n"), err);
 		goto out_nfc_exit;
 	}
 
 	// register IRQ
 	if ((err = request_irq(SW_INT_IRQNO_NAND, nfc_interrupt_handler,
 			       IRQF_DISABLED, "NFC", &info->mtd)) < 0) {
-		ERR_INFO("request IRQ fail\n");
+		pr_err(pr_fmt("IRQ request ERROR %d\n"), err);
 		goto out_nfc_exit;
 	}
 
 	// second phase scan
 	if ((err = nand_scan_tail(&info->mtd)) < 0) {
-		ERR_INFO("nand_scan_tail ERROR %d\n", err);
+		pr_err(pr_fmt("nand_scan_tail ERROR %d\n"), err);
 		goto out_irq;
 	}
 
-	if ((err = mtd_device_parse_register(&info->mtd, NULL, NULL, NULL, 0)) < 0) {
-		ERR_INFO("register mtd device fail\n");
+	err = mtd_device_parse_register(&info->mtd, sunxi_mtd_part_types,
+					NULL,
+					sunxi_mtd_partitions,
+					ARRAY_SIZE(sunxi_mtd_partitions));
+	if (err < 0) {
+		pr_err(pr_fmt("MTD register ERROR %d\n"), err);
 		goto out_release_nand;
 	}
 
@@ -110,6 +146,8 @@ out:
 static int __devexit nand_remove(struct platform_device *pdev)
 {
 	struct sunxi_nand_info *info = platform_get_drvdata(pdev);
+
+	DBG("");
 
 	platform_set_drvdata(pdev, NULL);
 	mtd_device_unregister(&info->mtd);
@@ -141,12 +179,12 @@ static void	nfc_dev_release(struct device *dev)
 }
 
 static struct platform_driver plat_driver = {
-	.probe		= nand_probe,
-	.remove		= nand_remove,
+	.probe      =             nand_probe,
+	.remove     = __devexit_p(nand_remove),
 	.shutdown   = nand_shutdown,
 	.suspend    = nand_suspend,
 	.resume     = nand_resume,
-	.driver		= {
+	.driver     = {
 		.name	= DRIVER_NAME,
 		.owner	= THIS_MODULE,
 	},
@@ -168,32 +206,30 @@ static int __init nand_init(void)
 	int err;
 	int nand_used = 0;
 
-    if (script_parser_fetch("nand_para", "nand_used", &nand_used, sizeof(int)))
-    	ERR_INFO("nand init fetch emac using configuration failed\n");
+	DBG("");
 
-    if(nand_used == 0) {
-        DBG_INFO("nand driver is disabled \n");
-        return 0;
-    }
+	if (script_parser_fetch("nand_para", "nand_used", &nand_used, sizeof(int)))
+		pr_err(pr_fmt("FEX script parse error\n"));
 
-	DBG_INFO("nand driver, init.\n");
+	if(nand_used == 0) {
+		DBG("nand driver is disabled");
+		return 0;
+	}
 
 	if ((err = platform_driver_register(&plat_driver)) != 0) {
-		ERR_INFO("platform_driver_register fail \n");
+		pr_err(pr_fmt("platform driver registration failure\n"));
 		return err;
 	}
-	DBG_INFO("nand driver, ok.\n");
 
 	// add an NFC, may be should be done by platform driver
 	if ((err = platform_device_register(&plat_device)) < 0) {
-		ERR_INFO("platform_device_register fail\n");
+		pr_err(pr_fmt("platform device registration failure\n"));
 		return err;
 	}
-	DBG_INFO("nand device, ok.\n");
 
-	if (nand1k_init()) {
-		ERR_INFO("nand1k module init fail\n");
-	}
+	if (nand1k_init())
+		// consider nand1k a non-critical component and continue
+		pr_err(pr_fmt("nand1k device registration failure\n"));
 
 	return 0;
 }
@@ -202,18 +238,19 @@ static void __exit nand_exit(void)
 {
 	int nand_used = 0;
 
+	DBG("");
+
 	if (script_parser_fetch("nand_para", "nand_used", &nand_used, sizeof(int)))
-		ERR_INFO("nand init fetch emac using configuration failed\n");
+		pr_err(pr_fmt("FEX script parse error\n"));
 
 	if(nand_used == 0) {
-		DBG_INFO("nand driver is disabled \n");
+		DBG("nand driver is disabled");
 		return;
 	}
 
 	nand1k_exit();
 	platform_device_unregister(&plat_device);
 	platform_driver_unregister(&plat_driver);
-	DBG_INFO("nand driver : bye bye\n");
 }
 
 module_init(nand_init);
