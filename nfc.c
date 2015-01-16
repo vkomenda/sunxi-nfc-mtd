@@ -718,7 +718,7 @@ static void nfc_cmdfunc(struct mtd_info *mtd, unsigned command, int column,
 		break;
 	case NAND_CMD_READ0:
 		if (read_buffer) {
-			u32* oob_start = read_buffer + mtd->writesize;
+			u32* oob_start = (u32*) read_buffer + mtd->writesize;
 			for (i = 0; i < sector_count; i++) {
 				u32 userdata = readl(NFC_REG_USER_DATA(i));
 				*(oob_start + i * 4) = userdata;
@@ -992,23 +992,6 @@ void nfc_write_set_pagesize(u32 page_addr, u32 size, void *buff)
 	nfc_select_chip(NULL, -1);
 }
 
-//////////////////////////////////////////////////////////////////////////////////////
-
-static void first_test_nfc(struct mtd_info *mtd)
-{
-	DBG("reset");
-	nfc_cmdfunc(mtd, NAND_CMD_RESET, -1, -1);
-	DBG("nand ctrl %x", readl(NFC_REG_CTL));
-	DBG("nand ecc ctrl %x", readl(NFC_REG_ECC_CTL));
-	DBG("nand timing %x", readl(NFC_REG_TIMING_CTL));
-	nfc_cmdfunc(mtd, NAND_CMD_READID, 0, -1);
-	DBG("readid first time: %x %x",
-	    nfc_read_byte(mtd),  nfc_read_byte(mtd));
-	nfc_cmdfunc(mtd, NAND_CMD_READID, 0, -1);
-	DBG("readid second time: %x %x",
-	    nfc_read_byte(mtd),  nfc_read_byte(mtd));
-}
-
 int nfc_first_init(struct mtd_info *mtd)
 {
 	u32 ctl;
@@ -1035,8 +1018,6 @@ int nfc_first_init(struct mtd_info *mtd)
 	// this is needed by some nand chip to read ID
 	ctl = (1 << 8);
 	writel(ctl, NFC_REG_TIMING_CTL);
-
-	first_test_nfc(mtd);
 
 	nand->ecc.mode = NAND_ECC_HW;
 	nand->ecc.hwctl = nfc_ecc_hwctl;
@@ -1277,6 +1258,8 @@ int nfc_second_init(struct mtd_info *mtd)
 	// setup ECC layout
 	nand->ecc.layout = &sunxi_ecclayout;
 	nand->ecc.bytes = 0;
+	nand->ecc.strength = 40;
+	nand->ecc.size = SZ_1K;
 	sunxi_ecclayout.eccbytes = 0;
 	sunxi_ecclayout.oobavail = 30; // mtd->writesize / 1024 * 4 - 2;
 	sunxi_ecclayout.oobfree->offset = 2;
