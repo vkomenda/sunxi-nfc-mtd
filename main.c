@@ -2,7 +2,7 @@
  * main.c
  *
  * Copyright (C) 2013 Qiang Yu <yuq825@gmail.com>
- *               2014 Vladimir Komendantskiy
+ *               2015 Vladimir Komendantskiy
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -47,7 +47,7 @@ static const char* const sunxi_mtd_part_types[] = {
 
 /*
  * Default partitions that are set up if the kernel command-line "mtdparts"
- * option did not parse. Chip size is fixed to 8 GiB.
+ * option did not parse. Chip size is fixed to 4 GiB.
  */
 static struct mtd_partition sunxi_mtd_partitions[] = {
 	{
@@ -61,9 +61,24 @@ static struct mtd_partition sunxi_mtd_partitions[] = {
 		.size   = SZ_4M,
 	},
 	{
-		.name   = "main",
+		.name   = "uEnv",
 		.offset = SZ_8M,
-		.size   = 4 * (uint64_t) SZ_1G - SZ_8M,
+		.size   = SZ_4M,
+	},
+	{
+		.name   = "packimg",
+		.offset = 12 * SZ_1M,
+		.size   = SZ_8M,
+	},
+	{
+		.name   = "kernel",
+		.offset = 20 * SZ_1M,
+		.size   = SZ_8M,
+	},
+	{
+		.name   = "rootfs",
+		.offset = 28 * SZ_1M,
+		.size   = 4 * (uint64_t) SZ_1G - 28 * SZ_1M,
 	},
 };
 

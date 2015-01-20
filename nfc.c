@@ -2,6 +2,7 @@
  * nfc.c
  *
  * Copyright (C) 2013 Qiang Yu <yuq825@gmail.com>
+ *               2015 Vladimir Komendantskiy
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -65,6 +66,12 @@ MODULE_PARM_DESC(bbt_use_flash, "flash bad block table placement: 1=flash, 0=RAM
 unsigned int random_switch = 1;
 module_param(random_switch, uint, 0);
 MODULE_PARM_DESC(random_switch, "random read/write switch: 1=on, 0=off");
+
+#define AW_RND_SEED 0x4a80
+
+unsigned int fixed_random_seed = AW_RND_SEED;
+module_param(fixed_random_seed, uint, 0);
+MODULE_PARM_DESC(fixed_random_seed, "random seed: default 0x4a80, 0=pseudorandom modulo page");
 
 unsigned int debug = 0;
 module_param(debug, uint, 0);
@@ -288,8 +295,6 @@ static inline int check_rb_ready(int rb)
 	return (readl(NFC_REG_ST) & (NFC_RB_STATE0 << (rb & 0x3))) ? 1 : 0;
 }
 
-#define AW_RND_SEED 0x4a80
-
 static void enable_random_preset(void)
 {
 	if (random_switch) {
@@ -298,7 +303,7 @@ static void enable_random_preset(void)
 		ctl |= NFC_RANDOM_EN;
 		ctl &= ~NFC_RANDOM_DIRECTION;
 		ctl &= ~NFC_RANDOM_SEED;
-		ctl |= AW_RND_SEED << 16;
+		ctl |= (fixed_random_seed & 0x7FF) << 16;
 		writel(ctl, NFC_REG_ECC_CTL);
 //		DBG("+random:preset");
 	}
@@ -676,8 +681,12 @@ static void nfc_cmdfunc(struct mtd_info *mtd, unsigned command, int column,
 		writel(sector_count, NFC_REG_SECTOR_NUM);
 
 	// enable random
-	if (do_enable_random)
-		enable_random(page_addr);
+	if (do_enable_random) {
+		if (!fixed_random_seed)
+			enable_random(page_addr);
+		else
+			enable_random_preset();
+	}
 
 	// enable ecc
 	if (do_enable_ecc)
