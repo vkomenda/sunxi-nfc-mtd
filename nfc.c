@@ -303,7 +303,7 @@ static void enable_random_preset(void)
 		ctl |= NFC_RANDOM_EN;
 		ctl &= ~NFC_RANDOM_DIRECTION;
 		ctl &= ~NFC_RANDOM_SEED;
-		ctl |= (fixed_random_seed & 0x7FF) << 16;
+		ctl |= (fixed_random_seed & 0x7FFF) << 16;
 		writel(ctl, NFC_REG_ECC_CTL);
 //		DBG("+random:preset");
 	}
