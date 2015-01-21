@@ -303,7 +303,9 @@ static void enable_random_preset(void)
 		ctl |= NFC_RANDOM_EN;
 		ctl &= ~NFC_RANDOM_DIRECTION;
 		ctl &= ~NFC_RANDOM_SEED;
-		ctl |= (fixed_random_seed & 0x7FFF) << 16;
+		ctl |= fixed_random_seed ?
+			(fixed_random_seed & 0x7FFF) << 16 :
+			AW_RND_SEED << 16;
 		writel(ctl, NFC_REG_ECC_CTL);
 //		DBG("+random:preset");
 	}
@@ -1270,9 +1272,9 @@ int nfc_second_init(struct mtd_info *mtd)
 	nand->ecc.strength = 40;
 	nand->ecc.size = SZ_1K;
 	sunxi_ecclayout.eccbytes = 0;
-	sunxi_ecclayout.oobavail = 30; // mtd->writesize / 1024 * 4 - 2;
-	sunxi_ecclayout.oobfree->offset = 2;
-	sunxi_ecclayout.oobfree->length = 30; // mtd->writesize / 1024 * 4 - 2;
+	sunxi_ecclayout.oobavail = mtd->writesize / 1024 * 4 - 2;
+	sunxi_ecclayout.oobfree->offset = 1;
+	sunxi_ecclayout.oobfree->length = mtd->writesize / 1024 * 4 - 2;
 	DBG("oobavail %d oobfree.offset %d oobfree.length %d",
 	    sunxi_ecclayout.oobavail, sunxi_ecclayout.oobfree->offset,
 	    sunxi_ecclayout.oobfree->length);

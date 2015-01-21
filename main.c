@@ -68,17 +68,22 @@ static struct mtd_partition sunxi_mtd_partitions[] = {
 	{
 		.name   = "packimg",
 		.offset = 12 * SZ_1M,
-		.size   = SZ_8M,
+		.size   = SZ_16M,
 	},
 	{
 		.name   = "kernel",
-		.offset = 20 * SZ_1M,
-		.size   = SZ_8M,
+		.offset = 28 * SZ_1M,
+		.size   = SZ_16M,
+	},
+	{
+		.name   = "initramfs",
+		.offset = 44 * SZ_1M,
+		.size   = SZ_256M,
 	},
 	{
 		.name   = "rootfs",
-		.offset = 28 * SZ_1M,
-		.size   = 4 * (uint64_t) SZ_1G - 28 * SZ_1M,
+		.offset = 300 * SZ_1M,
+		.size   = 4 * (uint64_t) SZ_1G - 300 * (uint64_t) SZ_1M,
 	},
 };
 
