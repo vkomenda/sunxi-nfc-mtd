@@ -63,6 +63,10 @@ unsigned int bbt_use_flash = 1;
 module_param(bbt_use_flash, uint, 0);
 MODULE_PARM_DESC(bbt_use_flash, "flash bad block table placement: 1=flash, 0=RAM");
 
+unsigned int invalid_bbm = 1;
+module_param(invalid_bbm, uint, 0);
+MODULE_PARM_DESC(invalid_bbm, "skip non-0 bad block markers: 1=yes, 0=no");
+
 unsigned int random_switch = 1;
 module_param(random_switch, uint, 0);
 MODULE_PARM_DESC(random_switch, "random read/write switch: 1=on, 0=off");
@@ -1045,6 +1049,8 @@ int nfc_first_init(struct mtd_info *mtd)
 	nand->bbt_options = NAND_BBT_SCANLASTPAGE; // | NAND_BBT_SCAN2NDPAGE
 	if (bbt_use_flash)
 		nand->bbt_options |= NAND_BBT_USE_FLASH | NAND_BBT_NO_OOB;
+	if (invalid_bbm)
+		nand->options |= NAND_INVALID_BBM;
 
 	/* Set up a temporary DMA read buffer */
 	dma_hdle = dma_nand_request(1);
@@ -1273,7 +1279,7 @@ int nfc_second_init(struct mtd_info *mtd)
 	nand->ecc.size = SZ_1K;
 	sunxi_ecclayout.eccbytes = 0;
 	sunxi_ecclayout.oobavail = mtd->writesize / 1024 * 4 - 2;
-	sunxi_ecclayout.oobfree->offset = 1;
+	sunxi_ecclayout.oobfree->offset = 2;
 	sunxi_ecclayout.oobfree->length = mtd->writesize / 1024 * 4 - 2;
 	DBG("oobavail %d oobfree.offset %d oobfree.length %d",
 	    sunxi_ecclayout.oobavail, sunxi_ecclayout.oobfree->offset,
@@ -1322,7 +1328,7 @@ int nfc_second_init(struct mtd_info *mtd)
 		print_page(mtd, 0, 1);
 		// start of SPL, read in 1 KiB mode
 		print_set_pagesize(mtd, SZ_1K, 0);
-		// start of U-Boot at 4 MiB with 16 KiB page size
+		// start of U-Boot at 4 MiB with datasheet page size
 		print_page(mtd, 256, 1);
 	}
 //	print_set_pagesize(mtd, SZ_2K, 0);
